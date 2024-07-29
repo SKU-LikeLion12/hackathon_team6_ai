@@ -7,6 +7,7 @@ import tempfile
 import requests
 import datetime
 from typing import Dict, Any
+import json
 
 load_dotenv(find_dotenv())
 
@@ -29,13 +30,12 @@ def transcribe_and_process(request):
         chat_data = {
             "userId": request.user.id,
             "message": refined_text,
-            "isRefined": True,
             "startTime": datetime.datetime.now().isoformat(),
             "endTime": datetime.datetime.now().isoformat(),
             "emotions": emotions,
             "situation": situation
         }
-
+  
         send_to_spring_server(chat_data)
 
         return JsonResponse({
@@ -67,7 +67,7 @@ def refine_text(text: str) -> str:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that refines diary entries into well-structured sentences."},
+            {"role": "system", "content": "You are a helpful assistant that refines diary entries into well-structured sentences. And you have to answer in casual Korean."},
             {"role": "user", "content": f"Please refine this diary entry into well-structured sentences: {text}"}
         ]
     )
@@ -94,21 +94,55 @@ def get_sentiment(text: str) -> Dict[str, int]:
                 emotions[emotion] = percentage
 
     total = sum(emotions.values())
-    if total != 100:
-        factor = 100 / total
-        emotions = {k: round(v * factor) for k, v in emotions.items()}
+
+    if total > 0:  # 0으로 나누는 것을 방지
+        if total != 100:
+            factor = 100 / total
+            emotions = {k: round(v * factor) for k, v in emotions.items()}
+    else:
+        # total이 0인 경우 처리
+        # 예: 모든 감정을 균등하게 분배
+        equal_value = 100 // len(emotions)
+        emotions = {k: equal_value for k in emotions}
+        # 남은 값을 첫 번째 감정에 할당
+        remainder = 100 - (equal_value * len(emotions))
+        if remainder > 0:
+            first_emotion = next(iter(emotions))
+            emotions[first_emotion] += remainder
 
     return emotions
 
-def get_situation(text: str) -> str:
+
+def get_situation(text: str) -> dict:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "Analyze the emotional situations in the following text. Extract instances of happiness, anxiety, sadness, and anger."},
+            {"role": "system", "content": "Analyze the emotional situations in the following text. Extract instances of happiness, anxiety, sadness, and anger. Respond in JSON format with keys '행복', '불안', '슬픔', '분노', and empty string values if not applicable. And you have to answer in casual Korean."},
             {"role": "user", "content": text}
         ]
     )
-    return response.choices[0].message.content
+    
+    gpt_response = response.choices[0].message.content
+    
+    situation = {
+        "행복": "",
+        "불안": "",
+        "슬픔": "",
+        "분노": ""
+    }
+    
+    try:
+        # GPT 응답을 JSON으로 파싱
+        parsed_response = json.loads(gpt_response)
+        
+        # 파싱된 응답에서 각 감정에 해당하는 값을 가져와 situation 딕셔너리에 업데이트
+        for emotion in situation.keys():
+            if emotion in parsed_response:
+                situation[emotion] = parsed_response[emotion]
+    except json.JSONDecodeError:
+        print("Failed to parse GPT response as JSON. Returning default dictionary.")
+    
+    return situation
 
 def send_to_spring_server(data: Dict[str, Any]) -> None:
     response = requests.post(
@@ -117,3 +151,4 @@ def send_to_spring_server(data: Dict[str, Any]) -> None:
         headers={'Content-Type': 'application/json'}
     )
     response.raise_for_status()
+
