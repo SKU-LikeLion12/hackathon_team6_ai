@@ -67,7 +67,7 @@ def refine_text(text: str) -> str:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that refines diary entries into well-structured sentences. And you have to answer in casual Korean."},
+            {"role": "system", "content": "You are a helpful assistant that refines diary entries into well-structured sentences. And you have to answer in casual Korean. "},
             {"role": "user", "content": f"Please refine this diary entry into well-structured sentences: {text}"}
         ]
     )
@@ -77,7 +77,23 @@ def get_sentiment(text: str) -> Dict[str, int]:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are an AI trained to analyze emotions in text. Provide emotion percentages for: happiness, anxiety, neutral, sadness, and anger. The total should sum to 100%."},
+            {"role": "system", "content": """
+             Here's the English translation of your request:
+             You are an expert in analyzing emotions from text. Please thoroughly analyze the given text and accurately assess the percentages of the following emotions: happiness, anxiety, neutral, sadness, and anger.
+             Guidelines for each emotion:
+             - Happiness: positive emotions such as joy, pleasure, satisfaction, excitement, hope, etc.
+             - Anxiety: reactions to worry, fear, nervousness, uncertainty
+             - Neutral: absence of specific emotions or a balanced emotional state
+             - Sadness: negative emotions such as depression, sense of loss, disappointment, regret, etc.
+             - Anger: strong negative emotions such as being mad, irritated, dissatisfied, hostile, etc.
+
+            Important notes:
+
+            Consider the context thoroughly in your analysis.
+            Try to capture subtle emotional nuances.
+            Express each emotion's percentage as an integer, and the sum must be exactly 100.
+            Please follow this exact format for your response:
+            Happiness: X%, Anxiety: Y%, Neutral: Z%, Sadness: A%, Anger: B%"""},
             {"role": "user", "content": f"Analyze the emotions in this text and provide percentages: {text}"}
         ],
         temperature=0.3,
@@ -141,7 +157,6 @@ def get_situation(text: str) -> dict:
                 situation[emotion] = parsed_response[emotion]
     except json.JSONDecodeError:
         print("Failed to parse GPT response as JSON. Returning default dictionary.")
-    
     return situation
 
 def send_to_spring_server(data: Dict[str, Any]) -> None:
