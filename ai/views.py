@@ -8,11 +8,19 @@ import requests
 import datetime
 from typing import Dict, Any
 import json
+import torch
+from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
+from django.conf import settings
 
 load_dotenv(find_dotenv())
-
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://localhost:8080/api/chat")
+SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://team6back.sku-sku.com/api/chat")
+
+# 모델과 토크나이저 로드
+model_path = os.path.join(settings.BASE_DIR, 'ai', 'feelinsight_distilbert_model')
+tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+model = DistilBertForSequenceClassification.from_pretrained(model_path)
+model.eval()
 
 @csrf_exempt
 def transcribe_and_process(request):
@@ -24,8 +32,9 @@ def transcribe_and_process(request):
     try:
         raw_transcript = get_transcript(audio_file)
         refined_text = refine_text(raw_transcript)
+        refined_text_KOR = refine_text_KOR(raw_transcript)
         emotions = get_sentiment(refined_text)
-        situation = get_situation(refined_text)
+        situation = get_situation(refined_text_KOR)
 
         chat_data = {
             "userId": request.user.id,
@@ -35,7 +44,10 @@ def transcribe_and_process(request):
             "emotions": emotions,
             "situation": situation
         }
-  
+        print(refined_text)
+        print(refined_text_KOR)
+        print(emotions)
+        print(situation)
         send_to_spring_server(chat_data)
 
         return JsonResponse({
@@ -67,67 +79,49 @@ def refine_text(text: str) -> str:
     response = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that refines diary entries into well-structured sentences. And you have to answer in casual Korean. "},
-            {"role": "user", "content": f"Please refine this diary entry into well-structured sentences: {text}"}
+            {"role": "system", "content": "You are a helpful assistant that makes minor corrections to diary entries, such as fixing spelling errors and removing unnecessary words, without altering the original meaning. Please ensure the revised text is clear and well-structured."},
+            {"role": "user", "content": f"Please refine this diary entry with minimal changes to spelling errors and unnecessary words, while preserving the original meaning: {text}"}
+        ]
+    )
+    return response.choices[0].message.content.strip()
+
+def refine_text_KOR(text: str) -> str:
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that makes minor corrections to diary entries, such as fixing spelling errors and removing unnecessary words, without altering the original meaning. Please ensure the revised text is clear and well-structured. And you have to answer in casual Korean"},
+            {"role": "user", "content": f"Please refine this diary entry with minimal changes to spelling errors and unnecessary words, while preserving the original meaning: {text}"}
         ]
     )
     return response.choices[0].message.content.strip()
 
 def get_sentiment(text: str) -> Dict[str, int]:
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": """
-             Here's the English translation of your request:
-             You are an expert in analyzing emotions from text. Please thoroughly analyze the given text and accurately assess the percentages of the following emotions: happiness, anxiety, neutral, sadness, and anger.
-             Guidelines for each emotion:
-             - Happiness: positive emotions such as joy, pleasure, satisfaction, excitement, hope, etc.
-             - Anxiety: reactions to worry, fear, nervousness, uncertainty
-             - Neutral: absence of specific emotions or a balanced emotional state
-             - Sadness: negative emotions such as depression, sense of loss, disappointment, regret, etc.
-             - Anger: strong negative emotions such as being mad, irritated, dissatisfied, hostile, etc.
+    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=128)
 
-            Important notes:
-
-            Consider the context thoroughly in your analysis.
-            Try to capture subtle emotional nuances.
-            Express each emotion's percentage as an integer, and the sum must be exactly 100.
-            Please follow this exact format for your response:
-            Happiness: X%, Anxiety: Y%, Neutral: Z%, Sadness: A%, Anger: B%"""},
-            {"role": "user", "content": f"Analyze the emotions in this text and provide percentages: {text}"}
-        ],
-        temperature=0.3,
-        max_tokens=150
-    )
+    with torch.no_grad():
+        outputs = model(**inputs)
     
-    analysis = response.choices[0].message.content
-    emotions = {"행복": 0, "불안": 0, "중립": 0, "슬픔": 0, "분노": 0}
+    probabilities = torch.sigmoid(outputs.logits).squeeze().tolist()
+    
+    # 학습 시 사용한 감정 순서
+    original_order = ['anger', 'anxiety', 'happiness', 'sadness', 'neutral']
+    
+    # 원하는 출력 감정 순서
+    desired_order = ['happiness', 'anxiety', 'neutral', 'sadness', 'anger']
+    
+    total = sum(probabilities)
+    percentages = [round((prob / total) * 100) for prob in probabilities]
+    
+    while sum(percentages) != 100:
+        if sum(percentages) > 100:
+            percentages[percentages.index(max(percentages))] -= 1
+        else:
+            percentages[percentages.index(min(percentages))] += 1
 
-    for line in analysis.split('\n'):
-        for emotion in emotions.keys():
-            if emotion in line:
-                percentage = int(line.split(':')[1].strip().rstrip('%'))
-                emotions[emotion] = percentage
-
-    total = sum(emotions.values())
-
-    if total > 0:  # 0으로 나누는 것을 방지
-        if total != 100:
-            factor = 100 / total
-            emotions = {k: round(v * factor) for k, v in emotions.items()}
-    else:
-        # total이 0인 경우 처리
-        # 예: 모든 감정을 균등하게 분배
-        equal_value = 100 // len(emotions)
-        emotions = {k: equal_value for k in emotions}
-        # 남은 값을 첫 번째 감정에 할당
-        remainder = 100 - (equal_value * len(emotions))
-        if remainder > 0:
-            first_emotion = next(iter(emotions))
-            emotions[first_emotion] += remainder
-
+    original_emotions = dict(zip(original_order, percentages))
+    emotions = {emotion: original_emotions[emotion] for emotion in desired_order}
+    
     return emotions
-
 
 def get_situation(text: str) -> dict:
     response = client.chat.completions.create(
