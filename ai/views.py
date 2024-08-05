@@ -14,7 +14,7 @@ from django.conf import settings
 
 load_dotenv(find_dotenv())
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://team6back.sku-sku.com/api/chat")
+SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://team6back.sku-sku.com/api/chat/")
 
 # 모델과 토크나이저 로드
 model_path = os.path.join(settings.BASE_DIR, 'ai', 'feelinsight_distilbert_model')
