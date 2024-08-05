@@ -23,6 +23,7 @@ model = DistilBertForSequenceClassification.from_pretrained(model_path)
 model.eval()
 
 @csrf_exempt
+@csrf_exempt
 def transcribe_and_process(request):
     if request.method != 'POST' or 'file' not in request.FILES:
         return JsonResponse({'error': 'Invalid request'}, status=400)
@@ -36,29 +37,42 @@ def transcribe_and_process(request):
         emotions = get_sentiment(refined_text)
         situation = get_situation(refined_text_KOR)
 
+        # 사용자 인증 확인
+        user_id = request.user.id if request.user.is_authenticated else None
+
         chat_data = {
-            "userId": request.user.id,
+            "userId": user_id,
             "message": refined_text,
             "startTime": datetime.datetime.now().isoformat(),
             "endTime": datetime.datetime.now().isoformat(),
             "emotions": emotions,
             "situation": situation
         }
-        print(refined_text)
-        print(refined_text_KOR)
-        print(emotions)
-        print(situation)
-        send_to_spring_server(chat_data)
+
+        # 디버깅을 위한 로그 추가
+        print("Refined text:", refined_text)
+        print("Refined text (KOR):", refined_text_KOR)
+        print("Emotions:", emotions)
+        print("Situation:", situation)
+
+        # Spring 서버로 데이터 전송
+        try:
+            send_to_spring_server(chat_data)
+        except Exception as e:
+            print(f"Error sending data to Spring server: {str(e)}")
+            # Spring 서버 오류가 전체 프로세스를 중단시키지 않도록 함
 
         return JsonResponse({
             'refined_text': refined_text,
             'emotions': emotions,
             'situation': situation,
-            'message': 'Chat entry saved successfully'
+            'message': 'Chat entry processed successfully'
         })
 
     except Exception as e:
-        return JsonResponse({'error': f'An error occurred: {str(e)}'}, status=500)
+        print(f"Error in transcribe_and_process: {str(e)}")
+        return JsonResponse({'error': f'An error occurred!!: {str(e)}'}, status=500)
+    
 
 def get_transcript(audio_file) -> str:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_file:
@@ -154,10 +168,18 @@ def get_situation(text: str) -> dict:
     return situation
 
 def send_to_spring_server(data: Dict[str, Any]) -> None:
-    response = requests.post(
-        SPRING_SERVER_URL, 
-        json=data,
-        headers={'Content-Type': 'application/json'}
-    )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            SPRING_SERVER_URL, 
+            json=data,
+            headers={'Content-Type': 'application/json'},
+            timeout=10  # 10초 타임아웃 설정
+        )
+        response.raise_for_status()
+        print("Data sent successfully to Spring server")
+    except requests.RequestException as e:
+        print(f"Error sending data to Spring server: {str(e)}")
+        if hasattr(e.response, 'text'):
+            print(f"Server response: {e.response.text}")
+        raise
 
