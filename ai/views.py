@@ -14,7 +14,7 @@ from django.conf import settings
 
 load_dotenv(find_dotenv())
 client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://team6back.sku-sku.com/api/chat/")
+SPRING_SERVER_URL = os.environ.get("SPRING_SERVER_URL", "http://localhost:8080/api/chat")
 
 # 모델과 토크나이저 로드
 model_path = os.path.join(settings.BASE_DIR, 'ai', 'feelinsight_distilbert_model')
@@ -23,12 +23,15 @@ model = DistilBertForSequenceClassification.from_pretrained(model_path)
 model.eval()
 
 @csrf_exempt
-@csrf_exempt
 def transcribe_and_process(request):
-    if request.method != 'POST' or 'file' not in request.FILES:
-        return JsonResponse({'error': 'Invalid request'}, status=400)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method is allowed'}, status=400)
+    if 'file' not in request.FILES:
+        return JsonResponse({'error': 'No file uploaded'}, status=400)
+    if 'userId' not in request.POST:
+        return JsonResponse({'error': 'userId is missing'}, status=400)
 
-    audio_file = request.FILES['file']
+    audio_file = request.FILES.get('file')
 
     try:
         raw_transcript = get_transcript(audio_file)
@@ -38,7 +41,7 @@ def transcribe_and_process(request):
         situation = get_situation(refined_text_KOR)
 
         # 사용자 인증 확인
-        user_id = request.user.id if request.user.is_authenticated else None
+        user_id = request.POST.get('userId')
 
         chat_data = {
             "userId": user_id,
