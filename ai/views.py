@@ -1,4 +1,6 @@
 import os
+import cgi
+from io import BytesIO
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from openai import OpenAI
@@ -24,15 +26,22 @@ model.eval()
 
 @csrf_exempt
 def transcribe_and_process(request):
+    print(request.FILES)
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST method is allowed'}, status=400)
-    if 'file' not in request.FILES:
-        return JsonResponse({'error': 'No file uploaded'}, status=400)
-    if 'userId' not in request.POST:
-        return JsonResponse({'error': 'userId is missing'}, status=400)
+
+    print(request)
+    print("FILES:", request.FILES)
+    print("POST:", request.POST)
+    print("Content-Type:", request.content_type)
+
+    token = request.headers.get('Authorization', None)
+    # 인증 토큰이 필요한 경우, 헤더에서 Authorization 값을 가져옵니다
+    if not token:
+        return JsonResponse({'error': 'Authorization token is missing'}, status=400)
 
     audio_file = request.FILES.get('file')
-
+    print(token)
     try:
         raw_transcript = get_transcript(audio_file)
         refined_text = refine_text(raw_transcript)
@@ -40,11 +49,8 @@ def transcribe_and_process(request):
         emotions = get_sentiment(refined_text)
         situation = get_situation(refined_text_KOR)
 
-        # 사용자 인증 확인
-        user_id = request.POST.get('userId')
-
         chat_data = {
-            "userId": user_id,
+            "token": token,
             "message": refined_text,
             "startTime": datetime.datetime.now().isoformat(),
             "endTime": datetime.datetime.now().isoformat(),
@@ -75,7 +81,7 @@ def transcribe_and_process(request):
     except Exception as e:
         print(f"Error in transcribe_and_process: {str(e)}")
         return JsonResponse({'error': f'An error occurred!!: {str(e)}'}, status=500)
-    
+
 
 def get_transcript(audio_file) -> str:
     with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_file:
